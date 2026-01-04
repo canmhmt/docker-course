@@ -357,3 +357,87 @@ Bu katmanlı ve parçalı yapıyı bizim için "tek bir disk" gibi birleştiren 
 **Özetle:** İmajlar, üst üste binmiş şeffaf asetat kağıtları gibidir. Her kağıt (katman) bağımsızdır ancak üst üste konulup ışığa tutulduğunda (Storage Driver ile mount edildiğinde) karşınıza tek bir resim (dosya sistemi) çıkar.
 
 
+---
+
+## Digest (Özet) ile İmaj Çekmek
+
+Şimdiye kadar imajları isimleri (etiketleri) üzerinden çektik. Bu yöntemde ciddi bir problem vardır: **Etiketler mutabıldır (değişebilir).**
+
+### 1. Değişebilir Etiketlerin (Mutable Tags) Riski
+
+Etiketler keyfidir ve her an başka bir imajı işaret edecek şekilde değiştirilebilir.
+
+* **Problem:** Bugün çektiğiniz `alpine:latest` imajı ile bir yıl önce çektiğiniz aynı etiketli imaj muhtemelen aynı değildir.
+* **Kritik Hata Senaryosu:** `golftrack:1.5` isimli bir imajınız olduğunu ve içinde güvenlik açığı bulunduğunu düşünün. Hatayı düzeltip yeni imajı **aynı etiketle** (`1.5`) sisteme yüklerseniz (overwrite), elinizde hangi konteynırın eski (güvensiz) hangisinin yeni (güvenli) olduğunu anlamanın bir yolu kalmaz. Her ikisinin de ismi aynıdır!
+
+### 2. Çözüm: Digest (Content Addressable Storage)
+
+Docker, **İçerik Adreslemeli Depolama** modelini kullanır. Bu modelde her imajın, içeriğinden üretilen kriptografik bir hash değeri (SHA256) vardır. Buna **Digest** denir.
+
+* **Değişmezlik:** İmajın içinde tek bir bit bile değişse, digest tamamen değişir.
+* **Çakışmazlık:** İki farklı imajın aynı digest'e sahip olması imkansızdır.
+* **Güvenlik:** Digest kullandığınızda, tam olarak istediğiniz içeriği indirdiğinizden %100 emin olursunuz.
+
+### 3. Digest Değerini Nasıl Buluruz?
+
+Digest değerini öğrenmek için üç farklı yöntem sunuluyor:
+
+* **Yerel İmajlar İçin:**
+`$ docker images --digests alpine`
+(Bu komut, yerel depodaki imajın `sha256:...` ile başlayan uzun özetini gösterir.)
+* **İndirmeden Önce (Docker CLI ile):**
+`$ docker buildx imagetools inspect nigelpoulton/k8sbook:latest`
+(Registry'deki imajın digest değerini çekip getirir.)
+* **API Üzerinden (curl ile):**
+`$ curl "https://hub.docker.com/v2/repositories/nigelpoulton/k8sbook/tags/?name=latest" | jq '.results[].digest'`
+
+### 4. Digest ile İmaj Çekme Komutu
+
+Bir imajı digest ile çekmek için iki nokta (`:`) yerine ampersand (`@`) sembolü kullanılır:
+
+`$ docker pull nigelpoulton/k8sbook@sha256:13dd59a0...bce2e14b`
+
+---
+
+**Özetle:** Üretim (production) ortamlarında, imajın içeriğinin değişmediğinden ve her zaman aynı kodun çalıştığından emin olmak için etiketler yerine **Digest** kullanmak en iyi uygulama (best practice) olarak kabul edilir.
+
+Tabii 👍 işte **kısa, net ve akılda kalıcı bir özet**:
+
+---
+
+## Docker Digest Hash Mekanizması 
+
+* Docker imajı tek parça değildir; **manifest + bağımsız katmanlardan** oluşur.
+
+* Bu yüzden **iki ana hash türü** vardır:
+
+  * **Image Digest:** İmajın manifest’inin hash’i (imajın kimliği)
+  * **Layer Digest:** Katmanın içeriğinin hash’i
+
+* Katmanlar registry’ye gönderilirken **sıkıştırılır**.
+
+* Sıkıştırma dosyanın bit yapısını değiştirdiği için **tek hash yeterli değildir**.
+
+* Bu nedenle her katman için **iki ayrı hash** tutulur:
+
+  * **Content Hash:** Katmanın sıkıştırılmamış, gerçek içeriği (diskteki doğruluk)
+  * **Distribution Hash:** Katmanın sıkıştırılmış, ağdan geçen hali (transfer güvenliği)
+
+* Farklı komutlarda farklı hash görmen:
+
+  * **Hata değil**
+  * Docker’ın bilinçli tasarımıdır
+
+### Sonuç
+
+Docker bu çift hash sistemi sayesinde:
+
+* Verinin **değişmediğini**
+* **Bozulmadığını**
+* **Transfer sırasında kurcalanmadığını**
+
+%100 güvenilir şekilde garanti eder.
+
+---
+
+

@@ -401,8 +401,6 @@ Bir imajı digest ile çekmek için iki nokta (`:`) yerine ampersand (`@`) sembo
 
 **Özetle:** Üretim (production) ortamlarında, imajın içeriğinin değişmediğinden ve her zaman aynı kodun çalıştığından emin olmak için etiketler yerine **Digest** kullanmak en iyi uygulama (best practice) olarak kabul edilir.
 
-Tabii 👍 işte **kısa, net ve akılda kalıcı bir özet**:
-
 ---
 
 ## Docker Digest Hash Mekanizması 

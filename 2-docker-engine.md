@@ -202,8 +202,6 @@ Hem Docker hem de Kubernetes, **runc**'ı varsayılan olarak şu ikili yapıda k
 
 **Özetle:** Bir konteynırın doğuşu; bir emrin (**CLI**), bir yöneticiye (**daemon**), oradan bir hazırlıkçıya (**containerd**) ve en son işi yapan bir ustaya (**runc**) iletilmesiyle gerçekleşir.
 
-Bu bölüm, Docker mimarisinin en zekice parçalarından biri olan ve "ara parça" görevi gören **shim** bileşenini anlatıyor. Yazar, bu küçük ama güçlü yapının neden var olduğunu ve sağladığı üç ana faydayı açıklıyor:
-
 ---
 
 ## Shim Nedir ve Ne İşe Yarar?

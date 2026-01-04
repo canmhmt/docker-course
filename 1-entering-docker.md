@@ -68,46 +68,27 @@
 ## Docker Platformu Temel Bileşenleri
 - Docker Platformunun iki temel bileşeni vardır, Docker Engine ve Docker CLI.
 ### 1. Docker Engine
-- Docker Engine Docker'ın kalbidir. Konteynerları çalıştıran asıl sistemdir. Üç ana yapıdan oluşur:
-  **Docker Daemon**  
-  **Docker Rest API**  
-  **Docker CLI**  
-- Bunlar birlikte çalışarak konteynerları, image'ları, networkleri ve volume'ları yönetir.
-
-#### Docker Daemon (dockerd)
-- Asıl işi yapan motor budur. Container'ları başlatır, durdurur, image indirir, volume ve network kurar.
-- Kullanıcı doğrudan daemon'a dokunmaz, CLI veya Rest API üzerinden erişir.
-
-#### Docker Rest API
-- Daemon ile konuşmanın standart arayüzüdür. Docker CLI ile Docker Daemon arasında iletişimi sağlar.
+- Docker Engine Docker'ın kalbidir. Konteynerları çalıştıran asıl sistemdir. Bu sisteme daha sonra ayrıntılı olarak girilecektir.
 
 ### 2. Docker CLI
-- Kullanıcının Docker ile iletişim kurduğu komut satırı arayüzü. Örneğin `docker run` komutu buradan gelir.
+- Kullanıcının Docker ile iletişim kurduğu komut satırı arayüzü. Örneğin `docker run` komutu buradan gelir. Buradan gelen komutlar docker rest api üzerinden docker daemon'a iletilir.
 
 ### Kısaca nasıl çalışır?
     Sen terminalden docker run komutunu yazarsın.
     Docker CLI bu isteği Rest API aracılığıyla Docker Daemon’a iletir.
-    Docker Daemon, image’a bakar, gerekiyorsa indirir.
-    Image’dan container yaratır ve çalıştırır.
+    Docker Daemon, containerd'ye imajın var olup olmadığını sorar.
+    containerd eğer imaj yoksa indirir varsa Image’dan container yaratır ve çalıştırır.
     Container çalışırken sen onun durumunu izleyebilir, durdurabilir ya da silebilirsin.
 
 | Katman        | Görev                                        |
 | ------------- | -------------------------------------------- |
 | Docker CLI    | Kullanıcının komutunu alır                   |
 | REST API      | CLI ile Daemon arasındaki haberleşme yoludur |
-| Docker Daemon | Asıl işlemleri yapar (container, image vs.)  |
+| Docker Daemon | Asıl işlemleri containerd'ye yaptırır. |
 
 Not: Docker sürümleri genellikle Docker CE (Community Edition) ve Docker EE (Enterprise Edition) olarak ikiye ayrılır. CE ücretsiz ve açık kaynaklı sürüm iken EE ücretli sürümüdür.
 
 ## Konteyner Dünyasındaki Önemli Standartlar
-
-### OCI (Open Container Initiative)
-- Standartları belirleyen kurul.
-
-#### OCI'nin 3 standardı vardır
-1. image-spec -> Docker imaj dosyalarının nasıl olacağını belirler. Docker'da **BuildKit**
-2. runtime-spec -> Konteyner nasıl çalıştırılır? Docker'da **runc**
-3. distribution-spec -> İmajlar nasıl dağıtılır? Docker'da **Docker Hub**
 
 # 2 - Docker Kurulumu
 ## Docker Toolbox
@@ -120,7 +101,7 @@ Not: Docker sürümleri genellikle Docker CE (Community Edition) ve Docker EE (E
 
 ## Adım Adım Kurulum
 
-### *0. Önceki kalan Docker paketleri temizlenir.*
+### **0. Önceki kalan Docker paketleri temizlenir.**
 
 ### 1. Update ve Upgrade
 - Sistem paketleri güncellenir.

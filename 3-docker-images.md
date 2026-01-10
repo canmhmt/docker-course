@@ -438,4 +438,279 @@ Docker bu çift hash sistemi sayesinde:
 
 ---
 
+## Docker'ın "Multi-architecture" (çoklu mimari) sistemi 
 
+### Temel Sorun: Neden Buna İhtiyaç Duyduk?
+
+Eskiden bilgisayarların çoğu aynı dili (mimariyi) konuşurdu (genellikle Intel/AMD yani x64). Ancak bugün işler değişti:
+
+* **Mac bilgisayarlar** artık M1/M2/M3 (ARM) çiplerini kullanıyor.
+* **Sunucular** genellikle x64 kullanıyor.
+* **Raspberry Pi** gibi cihazlar farklı bir ARM versiyonu kullanıyor.
+
+Eskiden her biri için ayrı bir imaj etiketi kullanmanız gerekiyordu: `alpine:amd64`, `alpine:arm64` gibi. Bu da otomasyonu ve kullanımı zorlaştırıyordu.
+
+---
+
+### Çözüm: "Akıllı Menü" Sistemi (Manifest List)
+
+Sistemi bir restoran menüsü gibi hayal et. Sen sadece **"Köfte"** siparişi veriyorsun (`docker pull alpine`). Garson (Docker Engine) senin kim olduğuna bakıyor:
+
+1. **Manifest List (Ana Menü):** Docker bir imajı çekmek istediğinde önce "Manifest List" denilen dosyaya bakar. Bu dosya aslında bir "yönlendirme tablosudur". İçinde şu yazar:
+* "Eğer gelen cihaz **Linux/AMD64** ise, şu dosyaya git."
+* "Eğer gelen cihaz **Linux/ARM64** ise, bu dosyaya git."
+
+
+2. **Manifest (Özel Tarif):** Manifest List sizi doğru mimariye yönlendirdiğinde, karşınıza o mimariye özel **Manifest** çıkar. Bu dosya şunları içerir:
+* İmajın konfigürasyon ayarları.
+* İmajı oluşturan katmanların (layers) listesi ve adresleri.
+
+---
+
+### Adım Adım Nasıl Çalışır?
+
+Diyelim ki bir **Apple M2 (ARM64)** bilgisayarın var ve `docker pull alpine` yazdın:
+
+* **1. Adım (Sorgu):** Docker istemcin Docker Hub'a (Registry) gider ve "Bana `alpine:latest` lazım" der.
+* **2. Adım (Kontrol):** Registry, `alpine:latest` etiketinin bir **Manifest List** olduğunu görür.
+* **3. Adım (Eşleşme):** Docker istemcin, Registry'ye "Benim mimarim **linux/arm64/v8**" bilgisini gönderir.
+* **4. Adım (Yönlendirme):** Manifest List içinden `linux/arm64/v8` satırı bulunur. Bu satırın yanındaki benzersiz kimlik (Digest/Hash) alınır.
+* **5. Adım (İndirme):** Sadece o mimariye ait olan katmanlar (layers) bilgisayarına indirilir.
+
+**Sonuç:** Sen sadece `alpine` yazdın ama Docker senin için arka planda "işlemcine en uygun" paketi bulup getirdi.
+
+---
+
+### Teknik Özet (Hiçbir Detayı Atlamadan)
+
+| Kavram | Ne Anlama Gelir? |
+| --- | --- |
+| **Manifest List** | Birden fazla mimariyi tek bir isim altında toplayan "üst dosya". (MediaType: `...manifest.list.v2+json`) |
+| **Manifest** | Belirli bir mimari için (örn. sadece ARM64) katmanların ve ayarların listesi. (MediaType: `...manifest.v2+json`) |
+| **Digest (SHA256)** | Her manifestin ve katmanın kendine has "parmak izi". Docker, doğru dosyayı çektiğinden emin olmak için bunları kullanır. |
+| **Platform** | İmajın çalışabileceği İşletim Sistemi (OS) ve İşlemci (Arch) kombinasyonu (Örn: `linux/ppc64le`). |
+
+**Neden Çok Önemli?**
+Eğer bu sistem olmasaydı, yazdığın bir `Dockerfile` veya `docker-compose` dosyası sadece senin bilgisayarında çalışırdı. Başka bir işlemci mimarisine sahip arkadaşına gönderdiğinde "Exec format error" hatası alırdı. Multi-arch imajlar sayesinde Docker'ın **"Bir kere yaz, her yerde çalıştır"** sözü gerçek olur.
+
+---
+
+
+### `docker manifest` Komutu (Röntgen Çekmek)
+
+Metinde geçen `docker manifest inspect` komutu, bir imajı indirmeden onun "kimlik kartına" bakmanı sağlar.
+
+* Örneğin `golang` imajına baktığında; sadece işlemci (AMD64, ARM, s390x) değil, **İşletim Sistemi (OS)** farklarını da görürsün.
+* Listede hem **Linux** hem de **Windows** için ayrı girişler vardır. Bu, tek bir ismin (`golang`) arkasında devasa bir kütüphane olduğunu kanıtlar.
+
+---
+
+### Imajları Nasıl "Üretiriz"? (Buildx Yöntemleri)
+
+Kendi uygulamanı yazdın ve bunu hem Intel sunucularda hem de yeni nesil ARM sunucularda çalıştırmak istiyorsun. Docker sana iki ana yol sunuyor:
+
+#### Emülasyon (Tercüman Kullanmak)
+
+Senin makinen ARM (Mac) ama Intel (AMD64) imajı üretmek istiyorsun.
+
+* **Nasıl çalışır?** Docker, **QEMU** denilen bir simülatör kullanır. Senin işlemcine "Sanki sen bir Intel işlemciymişsin gibi davran" der.
+* **Dezavantajı:** Çok yavaştır. Çünkü her işlem "tercüme" edilerek yapılır. Ayrıca önbellek (cache) paylaşımı zayıftır.
+
+#### Docker Build Cloud (Gerçek Donanım Kullanmak) -- **Best Practice**
+
+Bu en profesyonel ve hızlı yöntemdir.
+
+* **Nasıl çalışır?** Sen komutu kendi bilgisayarında verirsin ama build işlemi buluttaki **gerçek** ARM ve Intel makinelerde yapılır.
+* **Avantajı:** * Işık hızındadır (çünkü emülasyon yok, her makine kendi dilini konuşuyor).
+* Ekip arkadaşlarınla aynı "build cache"i paylaşırsın (birinin build ettiği şeyi diğeri tekrar beklemez).
+* CI/CD (GitHub Actions vb.) süreçlerine tam entegre olur.
+
+---
+
+### Örnek Komutun Anatomisi
+
+Metindeki şu komuta bakalım:
+`docker buildx build --platform linux/amd64,linux/arm64 -t nigelpoulton/tu-demo:latest --push .`
+
+Bu komut Docker'a şunu der:
+
+1. **--platform:** "Aynı anda hem Intel hem ARM versiyonlarını yap."
+2. **-t:** "İkisini de aynı isimle etiketle."
+3. **--push:** "Build biter bitmez bunları Registry'ye (buluta) gönder."
+4. **. :** "Dosyalar şu an bulunduğum klasörde."
+
+**Özetle:** Docker artık sadece bir "konteyner çalıştırıcı" değil, senin hangi makinede olduğunu anlayan ve ona göre doğru paketi getiren bir **akıllı lojistik sistemi** gibi çalışıyor. Geliştirici olarak senin tek yapman gereken, `buildx` ile imajını her iki dünyaya da uyumlu halde paketlemek.
+
+## Docker Scout
+
+- Docker Scout, imajlarındaki güvenlik açıklarını (vulnerabilities) tespit eden ve bunları nasıl düzelteceğine dair reçete sunan, Docker ekosistemine tam entegre bir **güvenlik analiz servisidir.**
+
+### 1. Docker Scout Nedir ve Nerede Bulunur?
+
+Docker Scout sadece bir komut satırı aracı değildir; Docker'ın her katmanına sızmıştır:
+
+* **CLI:** Terminalden hızlıca tarama yapmanı sağlar.
+* **Docker Desktop:** Görsel bir arayüzle zayıflıkları görmeni sağlar.
+* **Docker Hub:** Imajı pushladığın anda bulutta otomatik tarama yapar.
+* **scout.docker.com:** Tüm imajlarının güvenlik durumunu yönettiğin merkezi bir paneldir.
+
+---
+
+### 2. SBOM: Taramanın Temel Taşı
+
+Komutu çalıştırdığında ilk satırda `✓ SBOM of image already cached` ifadesini görürsün.
+
+* **SBOM (Software Bill of Materials):** Imajının içindeki tüm paketlerin (kütüphaneler, işletim sistemi araçları, versiyonlar) detaylı bir listesidir.
+* Scout, önce bu listeyi (indeksi) çıkarır, sonra bu listedeki paketleri dünyadaki bilinen güvenlik açığı veritabanlarıyla (CVE) karşılaştırır.
+
+---
+
+### 3. Temel Analiz Komutları
+
+#### A. `docker scout quickview`: Hızlı Özet
+
+Bu komut sana imajın genel sağlık durumunu bir tablo olarak sunar.
+
+* **Derecelendirme:** Açıkları ciddiyetine göre ayırır: **Critical (C), High (H), Medium (M), Low (L).**
+* **Öneri:** Sadece senin imajını değil, kullandığın "Base Image"ı da analiz eder. Eğer daha güvenli bir base image (örneğin `python:3-alpine` yerine `python:3.11-alpine`) varsa bunu sana hemen orada önerir.
+
+#### B. `docker scout cves`: Detaylı Teşhis ve Reçete
+
+Bu komut, "Hangi paket bozuk ve nasıl düzeltebilirim?" sorusuna yanıt verir.
+
+* **Hatalı Paket:** `expat` isimli paket.
+* **Mevcut Versiyon:** `2.5.0-r2`.
+* **Teşhis (CVE):** `CVE-2023-52425` numaralı güvenlik açığı.
+* **Reçete (Fix):** Scout sana doğrudan çözüm yolunu söyler: "Bu paketi `2.6.0-r0` versiyonuna yükseltirsen sorun çözülür."
+
+---
+
+> **Not:** Scout'un bazı özellikleri ücretsiz olsa da, detaylı analizler ve merkezi politika yönetimi için genellikle ücretli bir Docker aboneliği gerekir.
+
+---
+
+## Docker Image Silme Süreci
+
+### 1. Temel Komut: `docker rmi`
+
+İmaj silmek için kullanılan komut `docker rmi` (remove image) komutudur. Bu komutu çalıştırdığınızda iki ana işlem gerçekleşir:
+
+* **Untagged (Etiketin Kaldırılması):** İmajın adı (örneğin `redis:latest`) sistemden silinir.
+* **Deleted (Verinin Silinmesi):** İmajı oluşturan katmanlar ve dizinler yerel dosya sisteminden fiziksel olarak temizlenir.
+
+### 2. Katman Paylaşımı ve Akıllı Silme
+
+Docker'ın en önemli özelliği katmanların paylaşılmasıdır. Eğer iki farklı imaj aynı katmanı kullanıyorsa:
+
+* Siz ilk imajı sildiğinizde, ortak kullanılan katmanlar **silinmez.**
+* Bu katmanlar ancak onları kullanan **tüm imajlar silindiğinde** sistemden temizlenir. Bu, disk alanını korumak için tasarlanmış bir güvenlik önlemidir.
+
+---
+
+### 3. İmaj Belirleme Yöntemleri
+
+Bir imajı silmek için üç farklı yöntemi aynı komut içinde bile kullanabilirsiniz:
+
+* **İsim ve Etiket ile:** `redis:latest`
+* **Kısa ID ile:** `af111729d35a`
+* **Tam SHA (Digest) ile:** `sha256:c5b1261d...`
+
+**Örnek kullanım:**
+`$ docker rmi redis:latest af111729d35a sha256:c5b1261d...`
+
+---
+
+### 4. Silme Engelleri ve "Force" (-f) Bayrağı
+
+Docker, aşağıdaki durumlarda silme işlemini otomatik olarak durdurur:
+
+1. **Çalışan Konteynır:** Eğer bir imajdan türetilmiş bir konteynır varsa (çalışıyor ya da durmuş fark etmez), Docker o imajı silmenize izin vermez.
+2. **Çoklu Etiket:** Bir imaj ID'si birden fazla isme (tag) sahipse, imajın kendisi silinmez, sadece belirttiğiniz etiket kaldırılır.
+
+**Zorla Silme (`-f`):** `docker rmi -f` komutu ile silmeyi zorlayabilirsiniz. Ancak dikkatli olun! Eğer bir konteynır tarafından kullanılan bir imajı zorla silerseniz, Docker sadece etiketi kaldırır. İmaj "dangling" (sahipsiz/etiketsiz) bir halde sistemde kalmaya devam eder.
+
+---
+
+### 5. Toplu Silme (Handy Way)
+
+Sistemdeki tüm imajları tek seferde temizlemek için kullanılan profesyonel yöntem, `docker images -q` komutunun çıktısını (sadece ID'leri verir) `rmi` komutuna beslemektir.
+
+**Linux / Mac / PowerShell Komutu:**
+`$ docker rmi $(docker images -q) -f`
+
+**Bu komut nasıl çalışır?**
+
+1. `docker images -q` önce tüm imaj ID'lerini bir liste olarak döndürür.
+2. Bu liste `docker rmi` komutuna parametre olarak verilir.
+3. `-f` (force) kullanıldığı için konteynırlar tarafından kullanılan imajlar bile etiketsiz hale getirilerek temizlenmeye çalışılır.
+
+---
+
+### Özet: Bilmen Gereken Kritik Detaylar
+
+* **Hız:** Silme işlemi sadece veriyi silmekle kalmaz, aynı zamanda yerel repodan imajın kaydını da siler.
+* **Dikkat:** Toplu silme komutu geri alınamaz, tüm yerel çalışmanızı temizler.
+* **Sıralama:** Bir imajı tamamen temizlemek istiyorsanız, önce o imajı kullanan konteynırları (`docker rm`) silmeniz "best practice" olarak kabul edilir.
+
+--- 
+
+## Docker Image Komutlar
+
+---
+
+### 1. İmaj Edinme ve Keşif
+
+* **`docker pull`**: Uzak kayıt dosyalarından (registry) imaj indirir.
+* **Detay:** Varsayılan olarak Docker Hub'a bakar.
+* **Örnek:** `docker pull alpine:latest` komutu, Alpine deposundaki en güncel imajı çeker.
+
+
+* **`docker images`**: Yerel deponuzdaki (image cache) tüm imajları listeler.
+* **Detay:** Eğer imajların benzersiz parmak izlerini (SHA256 hash) görmek istersen `--digests` bayrağını eklemelisin.
+
+
+* **`docker inspect`**: Belirli bir imaj hakkında çok detaylı meta-veri (ayarlar, katman bilgileri, oluşturulma tarihi vb.) sunar. Çıktısı JSON formatında ve oldukça kapsamlıdır.
+
+---
+
+### 2. Mimari ve Manifest Yönetimi
+
+* **`docker manifest inspect`**: Henüz bilgisayarına indirmediğin, registry'de duran imajların "manifest listesine" bakmanı sağlar.
+* **Örnek:** `docker manifest inspect ghcr.io/regclient/regctl` komutu ile GitHub Container Registry'deki bir imajın hangi mimarileri desteklediğini görebilirsin.
+
+
+* **`docker buildx`**: Docker'ın en yeni build motoru özelliklerini sunan bir eklentidir.
+* **Detay:** Özellikle `imagetools` alt komutu ile imajların manifest verilerini sorgulamak ve çoklu mimari (multi-arch) yapısını anlamak için kullanılır.
+
+
+---
+
+### 3. Güvenlik ve Analiz
+
+* **`docker scout`**: İmajlarındaki güvenlik açıklarını (zayıflıkları) tarayan bir eklentidir.
+* **Detay:** Sadece taramakla kalmaz; sana bir rapor sunar ve bu açıkları nasıl kapatacağına dair (versiyon yükseltme gibi) önerilerde bulunur.
+
+
+---
+
+### 4. Temizlik ve Silme
+
+* **`docker rmi`**: İmajları yerel sistemden siler.
+* **Altın Kural 1:** Yerel dosya sistemindeki katman verilerini fiziksel olarak siler.
+* **Altın Kural 2:** Eğer bir imaj bir konteynır tarafından kullanılıyorsa, Docker o imajı silmene izin vermez (önce konteynırı silmen gerekir).
+
+---
+
+### Komut Özet Tablosu
+
+| Komut | Amacı | Bilinmesi Gereken |
+| --- | --- | --- |
+| `pull` | İndir | Varsayılan: Docker Hub |
+| `images` | Listele | `--digests` ile SHA gör |
+| `inspect` | İncele | En detaylı meta-veri |
+| `manifest inspect` | Uzaktan Bak | İndirmeden mimariyi gör |
+| `buildx` | Modern Build | Multi-arch desteği |
+| `scout` | Güvenlik | Zayıflık tarama ve çözüm |
+| `rmi` | Sil | Kullanımdaki imajı silemezsin |
+
+Bu komutlar, bir Docker imajının yaşam döngüsünü (oluşturulma, indirilme, analiz edilme ve yok edilme) yönetmek için ihtiyacın olan temel yapı taşlarıdır.

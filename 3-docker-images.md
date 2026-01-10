@@ -2,7 +2,7 @@
 
 ## Docker İmajları: Kısa Özet (TLDR)
 
-Not: **Image**, **Docker image**, **container image** ve **OCI image** terimlerinin hepsi aynı şeyi ifade eder ve kitap boyunca birbirinin yerine kullanılacaktır.
+Not: **Image**, **Docker image**, **container image** ve **OCI image** terimlerinin hepsi aynı şeyi ifade eder ve eğitim boyunca birbirinin yerine kullanılacaktır.
 
 ### 1. İmaj Nedir? (En Basit Tanımıyla)
 

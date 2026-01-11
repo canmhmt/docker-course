@@ -6,7 +6,7 @@ Not: **Image**, **Docker image**, **container image** ve **OCI image** terimleri
 
 ### 1. İmaj Nedir? (En Basit Tanımıyla)
 
-İmaj, bir uygulamayı çalıştırmak için ihtiyacınız olan her şeyi içeren **salt okunur (read-only)** bir pakettir.
+İmaj, bir uygulamayı çalıştırmak için ihtiyacınız olan her şeyi içeren **salt okunur (read-only)** bir pakettir. (Container çaıştığında copy-on-write sayesinde yeni katman eklenebilir. - container layer)
 
 * **İçinde ne var?** Uygulama kodu, bağımlılıklar (dependencies), temel işletim sistemi yapıları ve metadata.
 * **Çoklu kullanım:** Tek bir imajdan dilediğiniz kadar (yüzlerce, binlerce) konteynır başlatabilirsiniz.

@@ -226,3 +226,178 @@ Tarayıcını açıp `localhost:5005` yazdığında şunlar olur:
 
 ---
 
+## Konteyner Bir Uygulamayı Nasıl Çalıştırır?
+
+- Bir konteynırın içindeki uygulamanın kendi kendine nasıl başladığını anlamak, Docker'ın en kritik "mantık" bölümlerinden biridir. Bir konteynır aslında sadece içinde çalışan **bir ana süreçten (process)** ibarettir; o süreç bittiğinde konteynır da biter.
+
+- İşte Docker'ın bu süreci başlatmak için kullandığı üç yöntem ve aralarındaki farklar:
+
+### 1. Giriş Noktaları: Entrypoint ve Cmd
+
+- Bir imajın içinde, o imajdan bir konteynır yaratıldığında neyin çalışacağını söyleyen iki temel talimat (metadata) bulunur.
+
+* **Entrypoint (Giriş Noktası):** İmajın "asıl amacı"dır. Değiştirilmesi (override edilmesi) zordur. Genellikle uygulamanın ana çalıştırılabilir dosyasını tutar.
+* **Cmd (Varsayılan Komut):** Uygulamaya geçilecek varsayılan parametrelerdir. Eğer kullanıcı terminalde başka bir komut yazarsa, `Cmd` tamamen yok sayılır.
+
+### 2. Kritik Fark: Ezme mi, Ekleme mi?
+
+Metindeki en önemli teknik ayrım şudur: Eğer terminalden (`CLI`) bir komut gönderirseniz:
+
+* **İmajda `Entrypoint` varsa:** Yazdığınız komut, `Entrypoint`'in yanına bir **argüman** olarak eklenir. (Örneğin: `Entrypoint` "node" ise ve siz "index.js" yazarsanız, komut "node index.js" olur).
+* **İmajda `Cmd` varsa:** Yazdığınız komut, `Cmd`'yi **tamamen siler** ve yerine geçer.
+
+| Belirleme Yeri | Tip | CLI Argümanı ile Ne Olur? |
+| --- | --- | --- |
+| **İmaj İçinde** | `Entrypoint` | CLI argümanı sona eklenir. |
+| **İmaj İçinde** | `Cmd` | CLI argümanı `Cmd`'yi ezer/siler. |
+| **CLI (Terminal)** | `docker run ... <komut>` | İmajda talimat yoksa bu çalışır. |
+
+---
+
+### 3. Uygulamalı Örnekler
+
+#### İmaj Meta-verisini İncelemek
+
+`docker inspect` komutu ile imajın "tarif defterine" bakıp neyi çalıştırmak üzere programlandığını görebiliriz:
+
+```bash
+docker inspect nigelpoulton/ddd-book:web0.1 | grep Entrypoint -A 3
+
+```
+
+Bu komutun çıktısında `node ./app.js` görüyorsak, bu konteynır ayağa kalktığı an Node.js motorunu kullanarak web uygulamasını başlatacak demektir.
+
+#### CLI ile Komut Gönderme (`--rm` ve `sleep`)
+
+Bazen imajın varsayılan işini yapmasını değil, bizim istediğimiz bir şeyi yapmasını isteriz:
+
+```bash
+docker run --rm -d alpine sleep 60
+
+```
+
+* **`alpine`**: İmaj adı.
+* **`sleep 60`**: Bu bir CLI argümanıdır. Alpine imajında genellikle `Entrypoint` yoktur, sadece `Cmd` (shell) vardır. Biz `sleep 60` yazarak varsayılanı ezeriz ve konteynırın 60 saniye boyunca hiçbir şey yapmadan beklemesini sağlarız.
+* **`--rm`**: Bu çok pratik bir bayraktır. Konteynırın işi bittiğinde (60 saniye dolunca) onu otomatik olarak çöpe atar. Sistemin kirlenmesini engeller.
+
+---
+
+### 4. Özet: Konteynırın Yaşam Döngüsü
+
+Bir konteynır, içinde çalışan **ana süreç (Entrypoint veya Cmd ile başlayan uygulama)** canlı olduğu sürece ayaktadır.
+
+* Eğer web sunucusu bir hata verip kapanırsa, konteynır durur.
+* Eğer `sleep 60` süresi dolarsa, ana süreç biter ve konteynır durur.
+
+--- 
+
+## Çalışan bir konteynera bağlanmak
+
+Çalışan bir konteynerin içine girmek, sanki başka bir sunucuya SSH ile bağlanmak gibidir. Ancak Docker bunu çok daha hızlı ve hafif bir yolla, `docker exec` komutuyla yapar. Bu işlemin mantığını eksiksiz inceleyelim:
+
+### 1. `docker exec` Nedir?
+
+Bu komut, **zaten çalışmakta olan** bir konteynerin içinde ek bir süreç (process) başlatmanızı sağlar. İki farklı şekilde kullanılabilir:
+
+* **Interactive (Etkileşimli):** Terminalinizi konteynerin içindeki bir programa (genellikle bir shell) bağlar.
+* **Remote Execution (Uzaktan Çalıştırma):** Konteynerin içine girmeden dışarıdan bir komut gönderirsiniz, cevabı alır ve terminalinize dönersiniz (Örn: `docker exec webserver ls`).
+
+---
+
+### 2. Etkileşimli Bağlantı: `-it` Bayrağının Sırrı
+
+Metindeki şu komutu parçalayalım:
+`$ docker exec -it webserver sh`
+
+* **`-i` (interactive):** Konteyner ile aranızdaki iletişimi açık tutar (girdi göndermenizi sağlar).
+* **`-t` (tty):** Size gerçek bir terminal ekranı (pseudo-TTY) tahsis eder. Promptun (imlecin) değişmesini sağlayan budur.
+* **`webserver`:** Hangi konteynerin içine gireceğinizi belirtir.
+* **`sh`:** Konteynerin içinde hangi programı çalıştıracağınızı söyler. `sh` (Shell), Linux dünyasındaki en temel komut satırı arayüzüdür.
+
+---
+
+### 3. Konteyner Neden "Eksik" Gibi Hissettirir?
+
+Konteynerin içine girdiğinizde `ls` komutu çalışırken `vim` veya `nano` gibi komutların çalışmadığını görebilirsiniz. Bunun çok önemli bir sebebi vardır: **Hafiflik.**
+
+* **İmaj Optimizasyonu:** Bir Docker imajı (özellikle Alpine tabanlı olanlar), sadece uygulamanın çalışması için gereken **minimum** dosyaları içerir.
+* **Güvenlik:** İçinde editör (vim), ağ araçları (curl, ping) veya derleyiciler (gcc) bulunmayan bir konteyner, saldırganlar için çok daha zor bir hedeftir. Eğer bir araç imajda yoksa, o konteynerde o aracı kullanamazsınız.
+
+---
+
+### 4. Kritik Uyarı: Konteynerin İçinde Dosya Değiştirmek
+
+Metindeki örnekte `app.js` dosyasını görmenize rağmen onu düzenleyememeniz aslında Docker felsefesine uygundur:
+
+* **Geçicilik:** Eğer konteynerin içine girip bir dosyayı manuel olarak değiştirirseniz (örneğin `vim` yüklü olsaydı ve kodu değiştirseydiniz), konteyner silindiğinde bu değişiklik **yok olur.**
+* **Doğru Yöntem:** Değişikliği kendi bilgisayarınızdaki kod dosyasında yapmalı, yeni bir imaj build etmeli ve konteynerinizi güncellenmiş imajla yeniden başlatmalısınız.
+
+---
+
+### 5. PID 1: Konteynerin Kalbi
+
+Linux sistemlerde **PID 1** (Process ID 1), sistemin ilk ve en yetkili sürecidir. Docker dünyasında ise PID 1, konteynerin başlatılma sebebidir (yani `Entrypoint` veya `Cmd` ile belirttiğimiz uygulama).
+
+* **Bağımlılık:** Konteyner, sadece PID 1 sürecini hayatta tutmak için var olur.
+* **Ölüm Fermanı:** Eğer PID 1 (örneğin Node.js uygulamanız) çökerse veya durursa, Docker "yapacak iş kalmadı" diyerek konteyneri anında kapatır.
+
+---
+
+### 6. Süreç Analizi: İçeride Neler Dönüyor?
+
+| PID | Komut | Durumu |
+| --- | --- | --- |
+| **1** | `node ./app.js` | **Ana Süreç:** Bu durursa konteyner ölür. |
+| **13** | `sh` | **Ek Süreç:** Senin `docker exec -it` ile açtığın tüneldir. Sen `exit` dersen bu süreç biter ama konteyner (PID 1 sayesinde) çalışmaya devam eder. |
+| **22** | `ps` | **Geçici Süreç:** Sadece o anki listeyi göstermek için doğar ve işi bitince (milisaniyeler içinde) yok olur. |
+
+---
+
+### Özet: İpucu ve Notlar
+
+* **Çıkış Yapmak:** Konteynerin içindeki shell'den çıkmak için `exit` yazabilir veya `Ctrl + D` tuşlarına basabilirsiniz. Bu işlem konteyneri durdurmaz, sadece sizin bağlantınızı koparır.
+* **sh vs bash:** Bazı imajlarda `sh` yerine daha gelişmiş bir shell olan `bash` bulunur. Eğer `sh` çok kısıtlı gelirse `docker exec -it webserver bash` komutunu deneyebilirsiniz (tabii imajda yüklüyse).
+
+---
+
+## Docker Inspect Komutu
+
+### 1. `docker inspect`: Konteynerin "Röntgenini" Çekmek
+
+`docker inspect` komutu, Docker Daemon'ın o konteyner veya imaj hakkında bildiği **her şeyi** (JSON formatında) size sunar. Sadece çalışan süreci değil, altyapı ayarlarını da görmenizi sağlar.
+
+Metindeki örnekte öne çıkan kritik bilgiler şunlardır:
+
+* **State (Durum):** Konteynerin o anki yaşam belirtisidir. `running` (çalışıyor) bilgisini buradan teyit ederiz.
+* **PortBindings:** Dış dünyadaki hangi kapının (HostPort: `5005`), konteynerin içindeki hangi kapıya (ContainerPort: `8080`) bağlı olduğunu net bir şekilde gösterir.
+* **RestartPolicy:** Konteyner çökerse Docker'ın ne yapacağını söyler. "no" olması, konteyner durursa Docker'ın onu otomatik olarak tekrar başlatmayacağı anlamına gelir.
+* **Image & WorkingDir:** Konteynerin hangi temelden yükseldiğini ve dosya sisteminde hangi klasörü (`/src`) merkez aldığını belirtir.
+
+---
+
+### 2. Ayarların Kaynağı: İmajdan Konteynere Miras
+
+Metindeki en önemli teknik vurgu **kalıtımdır (inheritance).**
+
+Konteyneri inspect ettiğinizde gördüğünüz `Entrypoint` (başlangıç komutu olan `node ./app.js`), aslında konteynere özel bir ayar değildir. Konteyner bu ayarı, yaratıldığı **imajdan miras almıştır.**
+
+**Bunu nasıl kanıtlarız?**
+
+1. Önce konteyneri inceleyin: `docker inspect webserver`
+2. Sonra imajı inceleyin: `docker inspect nigelpoulton/ddd-book:web0.1`
+
+İkisinde de `Entrypoint` kısmının aynı olduğunu göreceksiniz. Bu, Docker'ın "bir kez paketle, her yerde aynı ayarla çalıştır" mantığının teknik kanıtıdır.
+
+---
+
+### 3. Neden Inspect Komutunu Kullanmalıyız?
+
+Hata ayıklama (debugging) sırasında şu soruların cevabını sadece `inspect` ile hızlıca bulabilirsiniz:
+
+* "Bu konteynerin IP adresi ne?"
+* "Hangi Volume'lar (diskler) bağlı?"
+* "Hangi ortam değişkenleri (Environment Variables) tanımlanmış?"
+* "Konteyner neden durdu? (ExitCode kaç?)"
+
+---
+

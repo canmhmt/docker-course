@@ -555,3 +555,144 @@ Debug modundayken çok yetenekli bir komut daha vardır:
 | --- | --- | --- |
 | **Çalışan Konteyner** | **Kalıcıdır** (Dikkat!) | Debug oturumunda kalır |
 | **İmaj / Durmuş Konteyner** | **Silinir** (Geçicidir) | Debug oturumunda kalır |
+
+---
+
+## Yeniden Başlatma Politikaları (Restart Policies)
+
+### 1. Dört Temel Politika
+
+Docker, konteyner başına uygulayabileceğiniz şu 4 politikayı destekler:
+
+1. **no (Varsayılan):** Konteyner durursa asla otomatik başlatılmaz.
+2. **on-failure:** Sadece konteyner bir hata ile (Non-zero exit code) kapanırsa yeniden başlatılır.
+3. **always:** Konteyner nasıl kapanırsa kapansın (hata veya normal çıkış) her zaman yeniden başlatılır.
+4. **unless-stopped:** `always` gibidir, ancak eğer konteyneri elle (`docker stop`) durdurursanız, Docker Daemon (motoru) yeniden başladığında bu konteyner kapalı kalmaya devam eder.
+
+---
+
+### 2. Senaryo Tablosu
+
+Hangi politikanın hangi durumda nasıl tepki verdiğini gösteren tabloyu aşağıda netleştirdim. (**Y**: Yeniden Başlatır, **N**: Başlatmaz)
+
+| Politika | Hatalı Çıkış (Non-zero exit code) | Normal Çıkış (Zero exit code) | `docker stop` Komutu | Daemon (Docker) Yeniden Başladığında |
+| --- | --- | --- | --- | --- |
+| **no** | N | N | N | N |
+| **on-failure** | **Y** | N | N | **Y** |
+| **always** | **Y** | **Y** | N* | **Y** |
+| **unless-stopped** | **Y** | **Y** | N | N |
+
+> **Not:**
+> * **Non-zero exit code:** Bir hata oluştuğunu gösterir (Örn: Uygulama çöktü).
+> * **Zero exit code:** Normal bir kapanışı gösterir (Örn: İş bitti ve `exit` dendi).
+> 
+> 
+
+---
+
+### 3. Uygulama: `always` Politikasını Test Etmek
+
+Şimdi teoriyi pratiğe dökelim. `always` politikasını kullanarak bir konteyner başlatacağız, onu manuel olarak kapatacağız ve Docker'ın onu diriltmesini izleyeceğiz.
+
+**Adım 1:** `neversaydie` (Asla Ölme) isminde, `always` politikasına sahip bir Alpine konteyneri başlatın.
+
+```bash
+$ docker run --name neversaydie -it --restart always alpine sh
+/#
+
+```
+
+Terminaliniz otomatik olarak konteynerin içindeki `sh` kabuğuna bağlandı.
+
+**Adım 2:** Konteyneri normal bir şekilde kapatmak için `exit` yazın.
+
+```bash
+/# exit
+
+```
+
+Bu komut "Zero exit code" (Normal çıkış) üretir. Normalde konteynerin kapanıp öylece kalması gerekirdi ama biz `--restart always` dediğimiz için Docker onu tekrar başlatmalıdır.
+
+**Adım 3:** Durumu kontrol edin.
+
+```bash
+$ docker ps
+CONTAINER ID   IMAGE    COMMAND   CREATED          STATUS          NAMES
+1933623830bb   alpine   "sh"      35 seconds ago   Up 2 seconds    neversaydie
+
+```
+
+**Analiz:**
+
+* **CREATED:** 35 saniye önce (İlk oluşturma zamanı).
+* **STATUS:** **Up 2 seconds** (Sadece 2 saniyedir çalışıyor).
+* **Sonuç:** Sen `exit` diyerek onu öldürdün, ama Docker onu hemen geri getirdi. Docker yeni bir konteyner yaratmadı, **aynı konteyneri** yeniden başlattı.
+
+**Adım 4:** Yeniden başlatma sayısını kontrol edin (`inspect`).
+
+```bash
+$ docker inspect neversaydie | grep RestartCount
+        "RestartCount": 1,
+
+```
+
+*(Windows PowerShell kullanıcıları `grep` yerine `Select-String -Pattern 'RestartCount'` kullanabilir.)*
+Gördüğünüz gibi, Docker bu konteyneri 1 kez yeniden başlattığını kaydetmiş.
+
+---
+
+### 4. Kritik Fark: `always` vs `unless-stopped`
+
+Metindeki en ilginç detaylardan biri bu iki politika arasındaki farktır.
+
+**Senaryo:**
+
+1. `--restart always` ile bir konteyner başlattın.
+2. `docker stop` ile onu elle durdurdun.
+3. Bilgisayarını (veya Docker servisini) yeniden başlattın.
+
+**Sonuç:**
+
+* **always:** Docker servisi açıldığı an, sen onu elle durdurmuş olsan bile, bu konteyneri tekrar başlatır. "Her zaman" kelimesini çok ciddiye alır.
+* **unless-stopped:** Docker servisi açıldığında konteyneri başlatmaz. Çünkü sen onu en son elle durdurmuştun ("Durdurulmadığı sürece" mantığı).
+
+Eğer konteynerin, sen onu kapattıktan sonra sistem yeniden başlasa bile kapalı kalmasını istiyorsan `unless-stopped` kullanmalısın.
+
+---
+
+### 5. Docker Compose / Stacks Kullanımı
+
+İlerleyen bölümlerde göreceğimiz Docker Compose dosyalarında bu ayar şu şekilde yapılır:
+
+```yaml
+services:
+  myservice:
+    <Snip>
+    restart_policy:
+      condition: always | unless-stopped | on-failure
+
+```
+
+## Bölüm Sonu - Konteynır Komutları
+
+* **`docker run`**: Yeni bir konteynır başlatmanın ana yoludur. İmaj adını verirsin ve Docker onu hayata geçirir.
+* *Örnek:* `docker run -it ubuntu bash` (Ubuntu imajından interaktif bir Bash kabuğu başlatır).
+
+
+* **`Ctrl-P-Q`**: Bağlı olduğun bir konteynırı **öldürmeden** terminalinden ayrılmanı (detach) sağlar. Günlük kullanımda en çok başvuracağın kısayoldur.
+* **`docker ps`**: Sadece çalışan konteynırları listeler. Durmuş olanları (Exited) görmek için `-a` (all) bayrağını eklemelisin.
+* **`docker exec`**: Çalışan bir konteynırın içine "ekstra" komutlar gönderir.
+* *İnteraktif:* `docker exec -it <isim> bash` (İçeride yeni bir kabuk açar).
+* *Uzaktan:* `docker exec <isim> ps` (İçeri girmeden komutu çalıştırıp sonucu getirir).
+
+
+* **`docker stop`**: Konteynırı nazikçe durdurur. Önce `SIGTERM` sinyali gönderip 10 saniye bekler, eğer uygulama hala kapanmamışsa `SIGKILL` ile zorla sonlandırır.
+* **`docker restart`**: Durmuş bir konteynırı eski ayarlarıyla tekrar ateşler.
+* **`docker rm`**: Konteynırı sistemden tamamen siler. Eğer konteynır çalışıyorsa `-f` (force) ile önce durdurup sonra silebilirsin.
+
+### İleri Seviye İzleme ve Hata Ayıklama
+
+* **`docker inspect`**: Konteynırın IP adresinden başlangıç komutlarına kadar her türlü teknik detayını JSON formatında önünüze serer.
+* **`docker debug`**: "Slim" (içi boş) imajlarda hayat kurtarır. Konteynırda shell olmasa bile dışarıdan bir alet çantasıyla içeri sızmanı sağlar (Pro/Business lisans gerektirir).
+
+---

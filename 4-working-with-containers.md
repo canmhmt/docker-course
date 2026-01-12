@@ -401,3 +401,157 @@ Hata ayıklama (debugging) sırasında şu soruların cevabını sadece `inspect
 
 ---
 
+## Konteyner Yaşam Döngüsü Kontrolü
+
+### 1. Durdurma (`stop`) ve Yeniden Başlatma (`restart`)
+
+Bir konteynırı `docker stop` ile durdurduğunda:
+
+* **İşlem:** Docker, ana sürece (PID 1) bir kapatma sinyali gönderir. Eğer uygulama 10 saniye içinde kapanmazsa Docker onu zorla kapatır.
+* **Görünürlük:** `docker ps` yazdığında konteynırı göremezsin; ancak `docker ps -a` (all) yazdığında `Exited` (Çıkış yaptı) durumunda orada beklediğini görürsün.
+* **Veri Durumu:** Önceki adımda `vi` ile yaptığın o meşhur değişiklik **kaybolmaz.** Çünkü konteynırın "yazılabilir katmanı" (thin R/W layer) hala diskte durmaktadır.
+
+### 2. Kritik Kanıt: Değişiklikler Neden Kalıyor?
+
+Konteynırı `docker restart` ile tekrar ayağa kaldırdığında ve tarayıcını yenilediğinde veya `docker exec webserver cat views/home.pug` komutuyla dosyayı kontrol ettiğinde, yaptığın değişikliğin hala orada olduğunu görürsün.
+
+* **Ders:** Konteynırı durdurup başlatmak veriyi silmez. Konteynırın "hafızası" (yazılabilir katmanı), konteynır objesi sistemden tamamen silinene kadar yaşamaya devam eder.
+
+### 3. Silme (`rm`) ve Verinin Yok Oluşu
+
+Her şeyi değiştiren komut `docker rm` komutudur.
+
+* **İşlem:** `docker rm webserver -f` komutuyla konteynırı sildiğinde, Docker bu konteynıra ait olan o özel "yazılabilir katmanı" da çöpe atar.
+* **Sonuç:** Konteynır artık `docker ps -a` listesinde bile yoktur. Eğer aynı imajdan tekrar bir konteynır başlatırsan (`docker run`), karşına orijinal (değiştirilmemiş) uygulama çıkar. Yaptığın tüm manuel değişiklikler sonsuza dek kaybolmuştur.
+
+---
+
+### Bölümün Teknik Özeti (Lifecycle)
+
+| Komut | Konteynırın Durumu | Veri (R/W Layer) |
+| --- | --- | --- |
+| `docker stop` | Exited (Durdu) | Güvende (Diskte duruyor) |
+| `docker restart` | Up (Çalışıyor) | Mevcut (Eski değişiklikler duruyor) |
+| `docker rm -f` | Yok Edildi | **SİLİNDİ** (Geri getirilemez) |
+
+### Önemli Kavram: Anti-Pattern
+
+Metinde geçen **Anti-Pattern** vurgusu çok kritiktir.
+
+* **Anti-Pattern:** Çalışan ama "yapılmaması gereken" yöntemdir.
+* **Neden?** Konteynırlar "geçici" (ephemeral) tasarlanmıştır. Eğer bir konteynırı silince uygulamanın ayarları veya verileri gidiyorsa ve sen bunu istemiyorsan, yanlış yoldasın demektir. Gerçek dünyada veriler konteynırın içinde değil, **Volume** adı verilen kalıcı dış alanlarda saklanır.
+
+---
+
+### 4. Konteynere Yeniden Bağlanma (`attach`)
+
+Durdurduğun veya `Ctrl+PQ` ile çıktığın bir konteynere geri dönmek için şu akış kullanılır:
+
+1. **Durdurulmuşsa:** `docker restart ddd-ctr` (Süreci tekrar canlandırır).
+2. **Bağlanmak için:** `docker attach ddd-ctr` (Terminalini çalışan o PID 1 sürecine tekrar bağlanır).
+
+---
+
+### 5. Docker Debug: "Zayıf" (Slim) İmajları Kurtarmak
+
+Metnin sonunda değinilen **Docker Debug**, modern konteyner dünyasının en büyük sorunlarından birini çözer: **İçinde araç olmayan imajlar.**
+
+Bildiğin üzere `alpine` veya `distroless` gibi "slim" imajlarda `ps`, `ls` ve hatta bazen `sh` bile bulunmaz. Bu konteynerler bozulduğunda içine girip bakamazsın.
+
+* **Docker Debug** bir eklentidir ve konteynere dışarıdan "bir alet çantası" (kendi shell'i ve araçları olan bir katman) getirir.
+* Konteyner ne kadar zayıf veya bozuk olursa olsun, `docker debug <container-id>` komutuyla içine sızıp hata ayıklama yapabilirsin.
+
+---
+
+### Özet: Kritik Bilgiler Tablosu
+
+| Eylem | PID 1 Süreci | Konteyner Durumu |
+| --- | --- | --- |
+| `exit` komutu | Sonlanır | **Durur (Exited)** |
+| `Ctrl + P + Q` | Çalışmaya devam eder | **Aktif (Up)** |
+| `docker stop` | Kapatma sinyali alır | **Durur (Exited)** |
+| `docker kill` | Zorla sonlandırılır | **Anında Durur** |
+| `attach` | Konteynerın PID 1´ine bağlanmak |
+
+
+--- 
+
+## Docker Debug
+
+---
+
+### 1. Sorun Nedir? (Slim İmaj Paradoksu)
+
+Güvenlik ve performans için "Slim" (zayıflatılmış) imajlar kullanmak "en iyi pratik" (best practice) olarak kabul edilir.
+
+* **Avantajı:** İçinde `shell` (kabuk), `curl`, `vim` veya `ping` gibi araçlar olmadığı için hackerlar sisteme sızsa bile hareket edemezler.
+* **Dezavantajı:** Bir sorun çıktığında **sen de** hareket edemezsin. Çünkü `docker exec` yapıp içeri girsen bile çalıştıracak bir komut bulamazsın.
+
+### 2. Çözüm: Docker Debug Nasıl Çalışır?
+
+Docker Debug, adeta bir "acil durum çantası" ile konteynerin yanına yaklaşan bir teknisyendir.
+
+* **Mekanizma:** Konteynerin içine özel bir `/nix` klasörü bağlar (mount eder).
+* **İzolasyon:** Bu `/nix` klasörü ve içindeki araçlar sadece senin hata ayıklama oturumunda (debug session) görünür. Konteynerin kendi uygulaması bu klasörü göremez.
+* **Erişim:** Konteynerde hiç shell (`sh`, `bash`) olmasa bile, Docker Debug kendi shell'ini getirerek içeri girmeni sağlar.
+
+---
+
+### 3. Ön Hazırlık ve Gereksinimler
+
+* **Lisans:** Bu özellik şu an için sadece **Pro, Team veya Business** lisansı olan kullanıcılara açıktır.
+* **Kurulum:** Docker Desktop'ın güncel sürümlerinde (4.27+) varsayılan olarak gelir. `docker info` komutunu çalıştırıp `Plugins` altında `debug` satırını görerek kontrol edebilirsin.
+
+---
+
+### 4. Senaryo 1: Çalışan Bir Konteyneri Debug Etmek
+
+Metindeki örnekte, içinde `ping`, `vim` veya `nslookup` olmayan çıplak bir `ubuntu` konteyneri (`ddd-ctr`) kullanılıyor.
+
+#### Adım A: Başarısızlık Testi
+
+Önce normal yolla (`docker attach`) bağlanıp komutları deniyoruz:
+`root@d3c892ad0eb3:/# ping google.com` -> **HATA:** `command not found`.
+
+#### Adım B: Docker Debug ile Giriş
+
+`$ docker debug ddd-ctr` komutunu verdiğinde:
+
+1. Seni `docker >` şeklinde özel bir prompt karşılar.
+2. Artık `ping` ve `vim` gibi araçlar varsayılan olarak elinin altındadır.
+3. **Kritik Fark:** Burada yaptığın dosya değişiklikleri (örn: `vim index.html`) **kalıcıdır.** Debug oturumunu kapatsan bile konteynerde bu değişiklik kalır.
+
+#### Adım C: Eksik Aracı Yüklemek (`install`)
+
+Diyelim ki `nslookup` komutuna ihtiyacın var ama debug kutusunda bile yok.
+
+* **Komut:** `docker > install bind`
+* **Kaynak:** Araç, NixOS paket deposundan (`search.nixos.org`) anında indirilir ve senin kişisel araç çantana eklenir. Bir sonraki debug oturumunda tekrar yüklemene gerek kalmaz.
+
+---
+
+### 5. Senaryo 2: Bir İmajı Debug Etmek (Sandbox Modu)
+
+Sadece çalışan konteynerleri değil, durağan bir imajı da (`nigelpoulton/ddd-book:web0.1`) inceleyebilirsin.
+
+* **Komut:** `$ docker debug nigelpoulton/ddd-book:web0.1`
+* **Uyarı Mesajı:** *"This is a sandbox shell. All changes will not affect the actual image."*
+* **Mantık:** Docker, bu imajdan geçici bir katman oluşturur. Sen dosya silip eklesen bile, debug oturumundan `exit` de diğin anda **her şey sıfırlanır.** İmajın orijinali asla bozulmaz.
+
+---
+
+### 6. `entrypoint` Analizi
+
+Debug modundayken çok yetenekli bir komut daha vardır:
+`docker > entrypoint --print`
+
+* Bu komut, imajın meta verilerini tarar ve sana "Bu konteyner başladığında tam olarak hangi komutu çalıştıracak?" sorusunun cevabını verir (Örn: `node ./app.js`).
+
+---
+
+### Özet: Kalıcılık (Persistence) Kuralları
+
+| Debug Hedefi | Dosya Değişiklikleri | Yüklenen Araçlar (`/nix`) |
+| --- | --- | --- |
+| **Çalışan Konteyner** | **Kalıcıdır** (Dikkat!) | Debug oturumunda kalır |
+| **İmaj / Durmuş Konteyner** | **Silinir** (Geçicidir) | Debug oturumunda kalır |
